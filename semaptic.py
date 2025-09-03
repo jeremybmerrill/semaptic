@@ -56,7 +56,7 @@ def make_output_filenames(filename):
   output_filenames = {"openai": {"xy": openai_emb_xy_file, "no_xy": openai_emb_file}, "gemini": {"xy": gemini_emb_xy_file, "no_xy": gemini_emb_file}}
   return output_filenames
 
-def embed_if_necessary(input_filename, model_to_use=DEFAULT_MODEL_TO_USE):
+def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MODEL_TO_USE):
   # prompt: create an embeddings column with the output of the text-embedding-large model from openai
   output_filenames  = make_output_filenames(input_filename)
   if (os.path.exists(output_filenames[model_to_use]["xy"]) or os.path.exists(output_filenames[model_to_use]["no_xy"])):
@@ -66,7 +66,7 @@ def embed_if_necessary(input_filename, model_to_use=DEFAULT_MODEL_TO_USE):
     print("embedding isn't expected, but okay if it is")
     input()
     raw_df = pd.read_csv(input_filename)
-    raw_df.rename({"title": "text"}, axis=1, inplace=True)
+    raw_df.rename({text_column_name: "text"}, axis=1, inplace=True)
     raw_df["text_to_embed"] = raw_df.text.str.replace(r"https://[^ ]+", '', regex=True).str.strip()
 
     if model_to_use == "openai":
@@ -241,9 +241,9 @@ def plot(df):
 
 
 
-def do_everything(input_filename, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE):
+def do_everything(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE):
   output_filenames  = make_output_filenames(input_filename)
-  df = embed_if_necessary(input_filename, model_to_use=model_to_use)
+  df = embed_if_necessary(input_filename, text_column_name, model_to_use=model_to_use)
   tokenize(df)
   topic_classifications(df, keyword_map=keyword_map)
   df = do_pacmap(df, output_filenames[model_to_use]["xy"])
