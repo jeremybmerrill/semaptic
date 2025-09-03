@@ -10,7 +10,7 @@ dependencies = [
     "openai",
     "google",
     "pacmap",
-    "sklearn",
+    "scikit-learn",
     "dash",
     "itables",
     "plotly"
