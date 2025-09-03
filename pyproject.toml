@@ -1,0 +1,17 @@
+[project]
+name = "semaptic"
+description = "helper for exploratory viz of CSV text data with embeddings + PaCMAP" 
+version = "0.0.1"
+authors = [
+    { name = "Jeremy Merrill", email = "jeremy.merrill@washpost.com" },
+]
+dependencies = [
+    "pandas",
+    "openai",
+    "google",
+    "pacmap",
+    "sklearn",
+    "dash",
+    "itables",
+    "plotly"
+]
