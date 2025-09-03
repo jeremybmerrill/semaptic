@@ -60,7 +60,7 @@ def embed_if_necessary(input_filename, model_to_use=DEFAULT_MODEL_TO_USE):
   # prompt: create an embeddings column with the output of the text-embedding-large model from openai
   output_filenames  = make_output_filenames(input_filename)
   if (os.path.exists(output_filenames[model_to_use]["xy"]) or os.path.exists(output_filenames[model_to_use]["no_xy"])):
-    raw_df = pd.read_csv(output_filenames[model_to_use]["xy"]) if os.path.exists(output_filenames[model_to_use]["xy"]) else pd.read_csv(output_filenames[model_to_use]["non_xy"]) # TODO: handle xy version
+    raw_df = pd.read_csv(output_filenames[model_to_use]["xy"]) if os.path.exists(output_filenames[model_to_use]["xy"]) else pd.read_csv(output_filenames[model_to_use]["no_xy"]) # TODO: handle xy version
     raw_df["embedding"] = raw_df.embedding.progress_apply(lambda emb: literal_eval(emb) if not pd.isnull(emb) else emb)
   else:
     print("embedding isn't expected, but okay if it is")
