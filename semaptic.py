@@ -80,7 +80,7 @@ def embed_if_necessary(input_filename, model_to_use=DEFAULT_MODEL_TO_USE):
         )
         return response.data[0].embedding
 
-      raw_df['embedding'] = raw_df['text_to_embed'].progress_apply(create_embedding)
+      raw_df['embedding'] = raw_df['text_to_embed'].progress_apply(create_embedding, desc="re-hydrating saved embeddings")
     elif model_to_use == "gemini":
       client = genai.Client(api_key=userdata.get("GEMINI_API_KEY"))
       def flatten(xss):
@@ -95,12 +95,12 @@ def embed_if_necessary(input_filename, model_to_use=DEFAULT_MODEL_TO_USE):
 
         return [emb.values for emb in response.embeddings]
       embed_df = raw_df[~raw_df["text_to_embed"].isna() & raw_df["text_to_embed"].str.len() > 0].copy()
-      embed_df['embedding'] = flatten([create_embedding(batch.to_list()) for batch in tqdm(np.array_split(embed_df['text_to_embed'], (len(embed_df) // 100) + 1 ))])
+      embed_df['embedding'] = flatten([create_embedding(batch.to_list()) for batch in tqdm(np.array_split(embed_df['text_to_embed'], (len(embed_df) // 100) + 1 ), desc="embedding texts")])
       raw_df.loc[embed_df.index, 'embedding'] = embed_df['embedding']
       output_filename = output_filenames[model_to_use]["no_xy"]
       raw_df.to_csv(output_filename)
       files.download(output_filename)
-    return raw_df
+  return raw_df
 
 def do_pacmap(raw_df, output_filename):
   df = raw_df.dropna(subset=['embedding'])
@@ -246,5 +246,5 @@ def do_everything(input_filename, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_
   df = embed_if_necessary(input_filename, model_to_use=model_to_use)
   tokenize(df)
   topic_classifications(df, keyword_map=keyword_map)
-  do_pacmap(df, output_filenames[model_to_use]["xy"])
+  df = do_pacmap(df, output_filenames[model_to_use]["xy"])
   plot(df)
