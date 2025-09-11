@@ -80,7 +80,7 @@ def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MO
         )
         return response.data[0].embedding
 
-      raw_df['embedding'] = raw_df['text_to_embed'].progress_apply(create_embedding, desc="re-hydrating saved embeddings")
+      raw_df['embedding'] = raw_df['text_to_embed'].progress_apply(create_embedding)
     elif model_to_use == "gemini":
       client = genai.Client(api_key=userdata.get("GEMINI_API_KEY"))
       def flatten(xss):
@@ -95,7 +95,7 @@ def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MO
 
         return [emb.values for emb in response.embeddings]
       embed_df = raw_df[~raw_df["text_to_embed"].isna() & raw_df["text_to_embed"].str.len() > 0].copy()
-      embed_df['embedding'] = flatten([create_embedding(batch.to_list()) for batch in tqdm(np.array_split(embed_df['text_to_embed'], (len(embed_df) // 100) + 1 ), desc="embedding texts")])
+      embed_df['embedding'] = flatten([create_embedding(batch.to_list()) for batch in tqdm(np.array_split(embed_df['text_to_embed'], (len(embed_df) // 100) + 1 ))])
       raw_df.loc[embed_df.index, 'embedding'] = embed_df['embedding']
       output_filename = output_filenames[model_to_use]["no_xy"]
       raw_df.to_csv(output_filename)
@@ -188,7 +188,8 @@ def calc_term_freqs(df_a, df_b, token_col_a, token_col_b=None, token_min_count_t
 # without a full Dash server, but it demonstrates the concept.)
 
 
-def plot(df):
+def plot(df, what_to_display="term_frequencies"):
+  assert what_to_display in ["term_frequencies", "text_counts", "topic_counts"]
   df["display_text"] = df.text.str.replace(r"https://[^ ]+", '', regex=True).str.wrap(100).str.replace("\n", "<br />")
   fig = px.scatter(df, x="x", y="y", color="topic", hover_name="display_text",
                     title='PaCMAP projection of ChatGPT chat titles',
@@ -221,13 +222,24 @@ def plot(df):
 
           selected_df = df[df.display_text.isin([p['hovertext'] for p in selected_data["points"]])]
           non_selected_df = df[~df.index.isin(selected_df.index)]
-          term_freqs = calc_term_freqs(selected_df, non_selected_df, "tokens")
-          term_freq_head_and_tail = pd.concat([term_freqs.head(20), term_freqs.sort_values("a_b_freq_ratio", ascending=True).head(20)])
-          return html.Div([
-              html.H4("Selected Data:" + str(len(selected_df))),
-              dash_table.DataTable(pd.DataFrame(selected_df.topic.value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["topic", "count"]]),
-              dash_table.DataTable(term_freq_head_and_tail.reset_index().to_dict('records'), [{"name": i, "id": i} for i in ["tokens", "token_count_a","freq_a","token_count_b","freq_b","a_b_freq_ratio"]])
-          ])
+          if what_to_display == "text_counts":
+            return html.Div([
+                html.H4("Selected Data:" + str(len(selected_df))),
+                dash_table.DataTable(pd.DataFrame(selected_df.display_text.rename("text").value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["text", "count"]])
+            ])
+          if what_to_display == "topic_counts":
+            return html.Div([
+                html.H4("Selected Data:" + str(len(selected_df))),
+                dash_table.DataTable(pd.DataFrame(selected_df.topic.value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["topic", "count"]])
+            ])          
+          elif what_to_display == "term_frequencies":
+            term_freqs = calc_term_freqs(selected_df, non_selected_df, "tokens")
+            term_freq_head_and_tail = pd.concat([term_freqs.head(20), term_freqs.sort_values("a_b_freq_ratio", ascending=True).head(20)])
+            return html.Div([
+                html.H4("Selected Data:" + str(len(selected_df))),
+                dash_table.DataTable(pd.DataFrame(selected_df.topic.value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["topic", "count"]]),
+                dash_table.DataTable(term_freq_head_and_tail.reset_index().to_dict('records'), [{"name": i, "id": i} for i in ["tokens", "token_count_a","freq_a","token_count_b","freq_b","a_b_freq_ratio"]])
+            ])
       return html.Div("No points selected.")
 
   # To run the Dash app in Colab:
@@ -238,7 +250,7 @@ def plot(df):
   if len(selected_df):
     with pd.option_context('display.max_colwidth', None, 'display.max_rows', 500):
       itables.show(selected_df[["created_at", "text", "url"]])
-
+      
 
 
 def do_everything(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE):
