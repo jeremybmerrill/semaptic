@@ -4,7 +4,7 @@ Semaptic is a utility for Colab to take a CSV, embed the text column with either
 
 This helps people explore large text datasets.
 
-You can try it in action here: https://colab.research.google.com/drive/1Y1-lUxXIBpakLyxKu9HUyulqv9IugcYy#scrollTo=kjmcnC-iUsVf
+You can try it in action [in this Colab notebook](https://colab.research.google.com/drive/1Y1-lUxXIBpakLyxKu9HUyulqv9IugcYy#scrollTo=kjmcnC-iUsVf)
 
 ## TODO list
 

@@ -1,0 +1,6 @@
+pandas
+openai
+google
+pacmap
+jupyter_dash
+itables

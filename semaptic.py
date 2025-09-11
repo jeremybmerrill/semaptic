@@ -250,13 +250,13 @@ def plot(df, what_to_display="term_frequencies"):
   if len(selected_df):
     with pd.option_context('display.max_colwidth', None, 'display.max_rows', 500):
       itables.show(selected_df[["created_at", "text", "url"]])
-      
 
 
-def do_everything(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE):
+
+def do_everything(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE, what_to_display="term_frequencies"):
   output_filenames  = make_output_filenames(input_filename)
   df = embed_if_necessary(input_filename, text_column_name, model_to_use=model_to_use)
   tokenize(df)
   topic_classifications(df, keyword_map=keyword_map)
   df = do_pacmap(df, output_filenames[model_to_use]["xy"])
-  plot(df)
+  plot(df, what_to_display=what_to_display)
