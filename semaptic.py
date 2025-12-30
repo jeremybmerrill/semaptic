@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
 """semantic embeddings mapper (with click-to-select!)
-
-This file is meant to be run from Colab.
-
 """
 
 """
@@ -17,6 +14,12 @@ assert MODEL_TO_USE in ["openai", "gemini"]
 import os
 from time import sleep
 from ast import literal_eval
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# on some platforms (like Jeremy's computer), this leads to a difficult-to-debug
+# error like "ValueError: could not broadcast input array from shape (0,) into shape (64,)"
+# this env var fixes
+os.environ["OMP_NUM_THREADS"] = "1"
 
 import pandas as pd
 import numpy as np
@@ -34,8 +37,14 @@ import plotly.express as px
 DEFAULT_MODEL_TO_USE = "gemini"
 
 try:
-  from google.colab import userdata, files
+  from google.colab import userdata, files, output as colab_output
 except ImportError:
+   # if we're not in colab, make stubs
+   class colab_output:
+     @staticmethod
+     def serve_kernel_port_as_iframe(port):
+        # no-op
+        pass
    print("not running in colab, so userdata and files modules not available") 
    # make a stub files with a download function that does nothing
    class files:
@@ -56,6 +65,66 @@ def make_output_filenames(filename):
   output_filenames = {"openai": {"xy": openai_emb_xy_file, "no_xy": openai_emb_file}, "gemini": {"xy": gemini_emb_xy_file, "no_xy": gemini_emb_file}}
   return output_filenames
 
+def _parallel_process(items, worker_fn, max_workers=10, desc="Processing"):
+  """
+  Generic parallel processing helper using ThreadPoolExecutor.
+  
+  Args:
+    items: List of (index, data) tuples to process
+    worker_fn: Function that takes data and returns result
+    max_workers: Number of parallel workers
+    desc: Description for progress bar
+    
+  Returns:
+    List of results in the same order as items
+  """
+  results = [None] * len(items)
+  
+  with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    future_to_idx = {executor.submit(worker_fn, data): idx for idx, data in items}
+    for future in tqdm(as_completed(future_to_idx), total=len(items), desc=desc):
+      idx = future_to_idx[future]
+      results[idx] = future.result()
+  
+  return results
+
+def _create_openai_embeddings(raw_df):
+  """Create embeddings using OpenAI API with parallel processing."""
+  client = OpenAI(api_key = userdata.get('OPENAI_API_KEY'))
+  
+  def create_embedding(text):
+    if not text or pd.isnull(text) or text == '':
+      return None
+    response = client.embeddings.create(
+        input = text,
+        model = "text-embedding-3-large",
+    )
+    return response.data[0].embedding
+  
+  texts_to_embed = list(enumerate(raw_df['text_to_embed']))
+  embeddings = _parallel_process(texts_to_embed, create_embedding, desc="Creating OpenAI embeddings")
+  raw_df['embedding'] = embeddings
+
+def _create_gemini_embeddings(raw_df):
+  """Create embeddings using Gemini API with batch processing."""
+  client = genai.Client(api_key=userdata.get("GEMINI_API_KEY"))
+  
+  def flatten(xss):
+    return [x for xs in xss for x in xs]
+  
+  def create_embedding(texts):
+    response = client.models.embed_content(
+            model="text-embedding-004",
+            contents=texts,
+            config=genai.types.EmbedContentConfig(task_type="SEMANTIC_SIMILARITY")
+            )
+    sleep(2.5) # 1,500 requests per minute https://ai.google.dev/gemini-api/docs/models#text-embedding
+    return [emb.values for emb in response.embeddings]
+  
+  embed_df = raw_df[~raw_df["text_to_embed"].isna() & raw_df["text_to_embed"].str.len() > 0].copy()
+  embed_df['embedding'] = flatten([create_embedding(batch.to_list()) for batch in tqdm(np.array_split(embed_df['text_to_embed'], (len(embed_df) // 100) + 1))])
+  raw_df.loc[embed_df.index, 'embedding'] = embed_df['embedding']
+
 def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MODEL_TO_USE):
   # prompt: create an embeddings column with the output of the text-embedding-large model from openai
   output_filenames  = make_output_filenames(input_filename)
@@ -70,36 +139,12 @@ def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MO
     raw_df["text_to_embed"] = raw_df.text.str.replace(r"https://[^ ]+", '', regex=True).str.strip()
 
     if model_to_use == "openai":
-      client = OpenAI(api_key = userdata.get('OPENAI_API_KEY'))
-      def create_embedding(text):
-        if not text or pd.isnull(text) or text == '':
-          return None
-        response = client.embeddings.create(
-            input = text,
-            model = "text-embedding-3-large",
-        )
-        return response.data[0].embedding
-
-      raw_df['embedding'] = raw_df['text_to_embed'].progress_apply(create_embedding)
+      _create_openai_embeddings(raw_df)
     elif model_to_use == "gemini":
-      client = genai.Client(api_key=userdata.get("GEMINI_API_KEY"))
-      def flatten(xss):
-        return [x for xs in xss for x in xs]
-      def create_embedding(texts):
-        response = client.models.embed_content(
-                model="text-embedding-004",
-                contents=texts,
-                config=genai.types.EmbedContentConfig(task_type="SEMANTIC_SIMILARITY")
-                )
-        sleep(2.5) # 1,500 requests per minute https://ai.google.dev/gemini-api/docs/models#text-embedding
-
-        return [emb.values for emb in response.embeddings]
-      embed_df = raw_df[~raw_df["text_to_embed"].isna() & raw_df["text_to_embed"].str.len() > 0].copy()
-      embed_df['embedding'] = flatten([create_embedding(batch.to_list()) for batch in tqdm(np.array_split(embed_df['text_to_embed'], (len(embed_df) // 100) + 1 ))])
-      raw_df.loc[embed_df.index, 'embedding'] = embed_df['embedding']
+      _create_gemini_embeddings(raw_df)
       output_filename = output_filenames[model_to_use]["no_xy"]
-      raw_df.to_csv(output_filename)
-      files.download(output_filename)
+    raw_df.to_csv(output_filename)
+    files.download(output_filename)
   return raw_df
 
 def do_pacmap(raw_df, output_filename):
@@ -242,8 +287,10 @@ def plot(df, what_to_display="term_frequencies"):
             ])
       return html.Div("No points selected.")
 
+
   # To run the Dash app in Colab:
-  app.run(mode='inline'); # This will embed the app directly in Colab
+  colab_output.serve_kernel_port_as_iframe(8050)
+  app.run(jupyter_mode='inline'); # This will embed the app directly in Colab
 
   # this cell is meant to be interactive, shown only when you interact with the plot above
   init_notebook_mode(all_interactive=True)

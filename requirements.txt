@@ -1,6 +1,6 @@
-pandas
-openai
-google
-pacmap
-jupyter_dash
+pandas>=2.3.1
+openai>=1.107.3
+google-genai>=1.56.0
+pacmap>=0.8.0
+dash>=3.2.0
 itables
