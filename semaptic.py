@@ -142,7 +142,7 @@ def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MO
       _create_openai_embeddings(raw_df)
     elif model_to_use == "gemini":
       _create_gemini_embeddings(raw_df)
-      output_filename = output_filenames[model_to_use]["no_xy"]
+    output_filename = output_filenames[model_to_use]["no_xy"]
     raw_df.to_csv(output_filename)
     files.download(output_filename)
   return raw_df
