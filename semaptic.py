@@ -5,13 +5,14 @@
 """
 !pip install -q pacmap jupyter_dash itables
 !wget -q -nc https://filedn.com/lVaAxkskVxILBoUDG3XUrm7/{filename_slug}.csv
-# !wget -q -nc https://filedn.com/lVaAxkskVxILBoUDG3XUrm7/{filename_slug}_with_openai_embeddings.csv
-# !wget -q -nc https://filedn.com/lVaAxkskVxILBoUDG3XUrm7/{filename_slug}_with_gemini_embeddings.csv
+# !wget -q -nc https://filedn.com/lVaAxkskVxILBoUDG3XUrm7/{filename_slug}_with_openai_embeddings.db
+# !wget -q -nc https://filedn.com/lVaAxkskVxILBoUDG3XUrm7/{filename_slug}_with_gemini_embeddings.db
 MODEL_TO_USE = "gemini"
 assert MODEL_TO_USE in ["openai", "gemini"]
 """
 
 import os
+import sqlite3
 from time import sleep
 from ast import literal_eval
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,12 +30,59 @@ from openai import OpenAI
 from google import genai
 from pacmap import PaCMAP
 from sklearn.preprocessing import normalize
+from sklearn.manifold import TSNE
+import umap
 from dash import dcc, html, Input, Output, dash_table, Dash
 import itables
 from itables import init_notebook_mode
 import plotly.express as px
 
 DEFAULT_MODEL_TO_USE = "gemini"
+
+def save_df_to_sqlite(df, db_filename, table_name="data"):
+  """Save dataframe to SQLite database"""
+  # Convert any list/array columns to strings for storage
+  df_copy = df.copy()
+  
+  # Convert all object columns that contain lists to strings
+  for col in df_copy.columns:
+    if df_copy[col].dtype == 'object':
+      # Check first non-null value to see if it's a list
+      first_non_null = df_copy[col].dropna().iloc[0] if not df_copy[col].dropna().empty else None
+      if first_non_null is not None and isinstance(first_non_null, (list, np.ndarray)):
+        print(f"Converting list column '{col}' to string format")
+        df_copy[col] = df_copy[col].apply(lambda x: str(x) if x is not None else None)
+  
+  with sqlite3.connect(db_filename) as conn:
+    df_copy.to_sql(table_name, conn, if_exists='replace', index=True)
+
+def load_df_from_sqlite(db_filename, table_name="data"):
+  """Load dataframe from SQLite database"""
+  with sqlite3.connect(db_filename) as conn:
+    df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn, index_col='index')
+  
+  # Convert string representations back to lists for specific columns
+  list_columns = ['embedding', 'tokens']  # Add other list columns as needed
+  for col in list_columns:
+    if col in df.columns:
+      def safe_literal_eval(x):
+        if pd.isnull(x) or x == 'nan' or x == 'None' or str(x).lower() == 'nan':
+          return None
+        try:
+          return literal_eval(str(x))
+        except (ValueError, SyntaxError) as e:
+          # For debugging, let's see what values are causing issues
+          if len(str(x)) < 200:  # Only print short problematic values
+            print(f"Warning: Could not parse {col} value: {str(x)} Error: {e}")
+          return None
+      
+      df[col] = df[col].progress_apply(safe_literal_eval)
+  
+  return df
+
+def download_sqlite_file(filename):
+  """Download SQLite file if running in Colab"""
+  files.download(filename)
 
 try:
   from google.colab import userdata, files, output as colab_output
@@ -56,12 +104,12 @@ except ImportError:
         'GEMINI_API_KEY': os.getenv("GEMINI_API_KEY"),
     }
 
-def make_output_filenames(filename): 
+def make_output_filenames(filename, dim_red_method="pacmap"): 
   filename_slug = filename.replace(".csv", "").replace("_with_openai_embeddings", "").replace("_with_gemini_embeddings", "").replace("_with_xy", "")
-  openai_emb_file = f"{filename_slug}_with_openai_embeddings.csv"
-  gemini_emb_file = f"{filename_slug}_with_gemini_embeddings.csv"
-  gemini_emb_xy_file = f"{filename_slug}_with_gemini_embeddings_with_xy.csv"
-  openai_emb_xy_file = f"{filename_slug}_with_openai_embeddings_with_xy.csv"
+  openai_emb_file = f"{filename_slug}_with_openai_embeddings.db"
+  gemini_emb_file = f"{filename_slug}_with_gemini_embeddings.db"
+  gemini_emb_xy_file = f"{filename_slug}_with_gemini_embeddings_with_{dim_red_method}_xy.db"
+  openai_emb_xy_file = f"{filename_slug}_with_openai_embeddings_with_{dim_red_method}_xy.db"
   output_filenames = {"openai": {"xy": openai_emb_xy_file, "no_xy": openai_emb_file}, "gemini": {"xy": gemini_emb_xy_file, "no_xy": gemini_emb_file}}
   return output_filenames
 
@@ -125,43 +173,101 @@ def _create_gemini_embeddings(raw_df):
   embed_df['embedding'] = flatten([create_embedding(batch.to_list()) for batch in tqdm(np.array_split(embed_df['text_to_embed'], (len(embed_df) // 100) + 1))])
   raw_df.loc[embed_df.index, 'embedding'] = embed_df['embedding']
 
-def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MODEL_TO_USE):
+def embed_df(raw_df, text_column_name, model_to_use=DEFAULT_MODEL_TO_USE):
+  raw_df.rename({text_column_name: "text"}, axis=1, inplace=True)
+  raw_df["text_to_embed"] = raw_df.text.str.replace(r"https://[^ ]+", '', regex=True).str.strip()  
+  if model_to_use == "openai":
+    _create_openai_embeddings(raw_df)
+  elif model_to_use == "gemini":
+    _create_gemini_embeddings(raw_df)
+  return raw_df 
+
+def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MODEL_TO_USE, dim_red_method="pacmap"):
   # prompt: create an embeddings column with the output of the text-embedding-large model from openai
-  output_filenames  = make_output_filenames(input_filename)
-  if (os.path.exists(output_filenames[model_to_use]["xy"]) or os.path.exists(output_filenames[model_to_use]["no_xy"])):
-    raw_df = pd.read_csv(output_filenames[model_to_use]["xy"]) if os.path.exists(output_filenames[model_to_use]["xy"]) else pd.read_csv(output_filenames[model_to_use]["no_xy"]) # TODO: handle xy version
-    raw_df["embedding"] = raw_df.embedding.progress_apply(lambda emb: literal_eval(emb) if not pd.isnull(emb) else emb)
+  output_filenames  = make_output_filenames(input_filename, dim_red_method)
+  
+  db_filename = None
+  # Prefer the xy file if it exists and has data, otherwise use no_xy file
+  if os.path.exists(output_filenames[model_to_use]["xy"]):
+    with sqlite3.connect(output_filenames[model_to_use]["xy"]) as conn:
+      try:
+        result = pd.read_sql_query("SELECT COUNT(*) as count FROM data", conn)
+        if result['count'].iloc[0] > 0:
+          db_filename = output_filenames[model_to_use]["xy"]
+      except:
+        pass  # Table doesn't exist or other error
+  
+  # If xy file is empty or doesn't exist, check no_xy file
+  if db_filename is None and os.path.exists(output_filenames[model_to_use]["no_xy"]):
+    with sqlite3.connect(output_filenames[model_to_use]["no_xy"]) as conn:
+      try:
+        result = pd.read_sql_query("SELECT COUNT(*) as count FROM data", conn)
+        if result['count'].iloc[0] > 0:
+          db_filename = output_filenames[model_to_use]["no_xy"]
+      except:
+        pass  # Table doesn't exist or other error
+  
+  if db_filename is not None:
+    raw_df = load_df_from_sqlite(db_filename)
   else:
     print("embedding isn't expected, but okay if it is")
     input()
     raw_df = pd.read_csv(input_filename)
-    raw_df.rename({text_column_name: "text"}, axis=1, inplace=True)
-    raw_df["text_to_embed"] = raw_df.text.str.replace(r"https://[^ ]+", '', regex=True).str.strip()
-
-    if model_to_use == "openai":
-      _create_openai_embeddings(raw_df)
-    elif model_to_use == "gemini":
-      _create_gemini_embeddings(raw_df)
+    raw_df = embed_df(raw_df, text_column_name=text_column_name, model_to_use=model_to_use)
     output_filename = output_filenames[model_to_use]["no_xy"]
-    raw_df.to_csv(output_filename)
-    files.download(output_filename)
+    save_df_to_sqlite(raw_df, output_filename)
+    download_sqlite_file(output_filename)
   return raw_df
 
-def do_pacmap(raw_df, output_filename):
+def _do_dimensionality_reduction(raw_df, method_name, reducer, output_filename=None):
+  """Generic dimensionality reduction function"""
   df = raw_df.dropna(subset=['embedding'])
 
   embedding_array = np.array(df.embedding.to_list())
   normed_truth_embeddings = normalize(embedding_array, norm='l2')
+  embedding_2d = reducer.fit_transform(normed_truth_embeddings)
+
+  raw_df.loc[df.index, f"x_{method_name}"] = embedding_2d[:, 0]
+  raw_df.loc[df.index, f"y_{method_name}"] = embedding_2d[:, 1]
+
+  save_df_to_sqlite(raw_df, output_filename)
+  download_sqlite_file(output_filename)
+
+  return raw_df
+
+def do_pacmap(raw_df, output_filename=None):
+  """
+  add columns x_pacmap, y_pacmap for PacMAP's reduction of the `embedding` field in `raw_df` to 2D
+
+  raw_df: a pandas DataFrame with an `embedding` column
+  output_filename [optional]: write `raw_df` to disk as sqlite3 at this filename, if specified
+                              if on colab, try to download the sqlite too.
+  """
   pacmap = PaCMAP(random_state=0, n_components=2, n_neighbors=None)
-  pacmap_embedding = pacmap.fit_transform(normed_truth_embeddings)
+  return _do_dimensionality_reduction(raw_df, "pacmap", pacmap, output_filename)
 
-  df["x"] = pacmap_embedding[:, 0]
-  df["y"] = pacmap_embedding[:, 1]
+def do_umap(raw_df, output_filename=None):
+  """
+  add columns x_umap, y_umap for UMAP's reduction of the `embedding` field in `raw_df` to 2D
 
-  df.to_csv(output_filename)
-  files.download(output_filename)
+  raw_df: a pandas DataFrame with an `embedding` column
+  output_filename [optional]: write `raw_df` to disk as sqlite3 at this filename, if specified
+                              if on colab, try to download the sqlite too.
+  """
+  umap_reducer = umap.UMAP(random_state=0, n_components=2)
+  return _do_dimensionality_reduction(raw_df, "umap", umap_reducer, output_filename)
 
-  return df
+def do_tsne(raw_df, output_filename=None):
+  """
+  add columns x_tsne, y_tsne for t-SNE's reduction of the `embedding` field in `raw_df` to 2D
+
+  raw_df: a pandas DataFrame with an `embedding` column
+  output_filename [optional]: write `raw_df` to disk as sqlite3 at this filename, if specified
+                              if on colab, try to download the sqlite too.
+  """
+  df = raw_df.dropna(subset=['embedding'])
+  tsne = TSNE(random_state=0, n_components=2, perplexity=min(30, len(df)-1))
+  return _do_dimensionality_reduction(raw_df, "tsne", tsne, output_filename)
 
 def topic_classifications(df, keyword_map):
   """
@@ -233,11 +339,16 @@ def calc_term_freqs(df_a, df_b, token_col_a, token_col_b=None, token_min_count_t
 # without a full Dash server, but it demonstrates the concept.)
 
 
-def plot(df, what_to_display="term_frequencies"):
+def plot(df, what_to_display="term_frequencies", dim_red_method="pacmap"):
   assert what_to_display in ["term_frequencies", "text_counts", "topic_counts"]
   df["display_text"] = df.text.str.replace(r"https://[^ ]+", '', regex=True).str.wrap(100).str.replace("\n", "<br />")
-  fig = px.scatter(df, x="x", y="y", color="topic", hover_name="display_text",
-                    title='PaCMAP projection of ChatGPT chat titles',
+  
+  # Use algorithm-specific column names
+  x_col = f"x_{dim_red_method}"
+  y_col = f"y_{dim_red_method}"
+  
+  fig = px.scatter(df, x=x_col, y=y_col, color="topic", hover_name="display_text",
+                    title=f'{dim_red_method.upper()} projection of text data',
                     opacity=0.4,
                     width=1200, height=800)
 
@@ -300,10 +411,20 @@ def plot(df, what_to_display="term_frequencies"):
 
 
 
-def do_everything(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE, what_to_display="term_frequencies"):
-  output_filenames  = make_output_filenames(input_filename)
-  df = embed_if_necessary(input_filename, text_column_name, model_to_use=model_to_use)
+def embed_reduce_and_map(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE, what_to_display="term_frequencies", dim_red_method="pacmap"):
+  assert dim_red_method in ["pacmap", "umap", "tsne"], f"dim_red_method must be one of 'pacmap', 'umap', 'tsne', got {dim_red_method}"
+  
+  output_filenames = make_output_filenames(input_filename, dim_red_method)
+  df = embed_if_necessary(input_filename, text_column_name, model_to_use=model_to_use, dim_red_method=dim_red_method)
   tokenize(df)
   topic_classifications(df, keyword_map=keyword_map)
-  df = do_pacmap(df, output_filenames[model_to_use]["xy"])
-  plot(df, what_to_display=what_to_display)
+  
+  # Apply the chosen dimensionality reduction method
+  if dim_red_method == "pacmap":
+    df = do_pacmap(df, output_filenames[model_to_use]["xy"])
+  elif dim_red_method == "umap":
+    df = do_umap(df, output_filenames[model_to_use]["xy"])
+  elif dim_red_method == "tsne":
+    df = do_tsne(df, output_filenames[model_to_use]["xy"])
+  
+  plot(df, what_to_display=what_to_display, dim_red_method=dim_red_method)

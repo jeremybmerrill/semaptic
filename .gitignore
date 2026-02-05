@@ -1,0 +1,7 @@
+.env
+build/
+.venv
+__pycache__/
+.DS_Store
+*.db
+semaptic.egg-info

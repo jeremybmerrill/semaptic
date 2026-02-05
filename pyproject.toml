@@ -10,6 +10,7 @@ dependencies = [
     "openai >= 1.107.3",
     "google-genai >= 1.56.0",
     "scikit-learn",
+    "umap-learn",
     "dash >= 3.2.0",
     "itables",
     "plotly",
