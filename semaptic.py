@@ -36,6 +36,8 @@ from dash import dcc, html, Input, Output, dash_table, Dash
 import itables
 from itables import init_notebook_mode
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 DEFAULT_MODEL_TO_USE = "gemini"
 
@@ -269,6 +271,30 @@ def do_tsne(raw_df, output_filename=None):
   tsne = TSNE(random_state=0, n_components=2, perplexity=min(30, len(df)-1))
   return _do_dimensionality_reduction(raw_df, "tsne", tsne, output_filename)
 
+def do_pacmap_3d(raw_df, output_filename=None):
+  """
+  add columns x_pacmap_3d, y_pacmap_3d, z_pacmap_3d for PacMAP's reduction of the `embedding` field in `raw_df` to 3D
+
+  raw_df: a pandas DataFrame with an `embedding` column
+  output_filename [optional]: write `raw_df` to disk as sqlite3 at this filename, if specified
+                              if on colab, try to download the sqlite too.
+  """
+  df = raw_df.dropna(subset=['embedding'])
+
+  embedding_array = np.array(df.embedding.to_list())
+  normed_truth_embeddings = normalize(embedding_array, norm='l2')
+  pacmap = PaCMAP(random_state=0, n_components=3, n_neighbors=None)
+  embedding_3d = pacmap.fit_transform(normed_truth_embeddings)
+
+  raw_df.loc[df.index, "x_pacmap_3d"] = embedding_3d[:, 0]
+  raw_df.loc[df.index, "y_pacmap_3d"] = embedding_3d[:, 1]
+  raw_df.loc[df.index, "z_pacmap_3d"] = embedding_3d[:, 2]
+
+  save_df_to_sqlite(raw_df, output_filename)
+  download_sqlite_file(output_filename)
+
+  return raw_df
+
 def topic_classifications(df, keyword_map):
   """
   df: dataframe with a `text` column
@@ -343,14 +369,80 @@ def plot(df, what_to_display="term_frequencies", dim_red_method="pacmap"):
   assert what_to_display in ["term_frequencies", "text_counts", "topic_counts"]
   df["display_text"] = df.text.str.replace(r"https://[^ ]+", '', regex=True).str.wrap(100).str.replace("\n", "<br />")
   
-  # Use algorithm-specific column names
-  x_col = f"x_{dim_red_method}"
-  y_col = f"y_{dim_red_method}"
-  
-  fig = px.scatter(df, x=x_col, y=y_col, color="topic", hover_name="display_text",
-                    title=f'{dim_red_method.upper()} projection of text data',
-                    opacity=0.4,
-                    width=1200, height=800)
+  # Handle 3D case with three separate 2D plots
+  if dim_red_method == "pacmap_3d":
+    # Create subplot figure with 1 row and 3 columns
+    fig = make_subplots(
+        rows=3, cols=1,
+        subplot_titles=('X vs Y', 'X vs Z', 'Y vs Z'),
+        horizontal_spacing=0.1
+    )
+    
+    # Create consistent color mapping for topics
+    unique_topics = df['topic'].unique()
+    colors = px.colors.qualitative.Plotly[:len(unique_topics)]
+    color_map = {topic: colors[i] for i, topic in enumerate(unique_topics)}
+    
+    # Common scatter plot settings
+    scatter_kwargs = dict(
+        mode='markers',
+        marker=dict(opacity=0.4),
+        text=df["display_text"],
+        hovertemplate='%{text}<extra></extra>'
+    )
+    
+    # Add X vs Y plot
+    for topic in unique_topics:
+        topic_data = df[df['topic'] == topic]
+        fig.add_trace(go.Scatter(
+            x=topic_data['x_pacmap_3d'],
+            y=topic_data['y_pacmap_3d'],
+            name=topic,
+            legendgroup=topic,
+            marker=dict(color=color_map[topic], opacity=0.4),
+            **{k: v for k, v in scatter_kwargs.items() if k != 'marker'}
+        ), row=1, col=1)
+    
+    # Add X vs Z plot
+    for topic in unique_topics:
+        topic_data = df[df['topic'] == topic]
+        fig.add_trace(go.Scatter(
+            x=topic_data['x_pacmap_3d'],
+            y=topic_data['z_pacmap_3d'],
+            name=topic,
+            legendgroup=topic,
+            showlegend=False,
+            marker=dict(color=color_map[topic], opacity=0.4),
+            **{k: v for k, v in scatter_kwargs.items() if k != 'marker'}
+        ), row=2, col=1)
+    
+    # Add Y vs Z plot
+    for topic in unique_topics:
+        topic_data = df[df['topic'] == topic]
+        fig.add_trace(go.Scatter(
+            x=topic_data['y_pacmap_3d'],
+            y=topic_data['z_pacmap_3d'],
+            name=topic,
+            legendgroup=topic,
+            showlegend=False,
+            marker=dict(color=color_map[topic], opacity=0.4),
+            **{k: v for k, v in scatter_kwargs.items() if k != 'marker'}
+        ), row=3, col=1)
+    
+    fig.update_layout(
+        title=f'{dim_red_method.upper()} projection of text data - 2D projections',
+        width=600, height=1800
+    )
+    
+  else:
+    # Use algorithm-specific column names for 2D plots
+    x_col = f"x_{dim_red_method}"
+    y_col = f"y_{dim_red_method}"
+    
+    fig = px.scatter(df, x=x_col, y=y_col, color="topic", hover_name="display_text",
+                      title=f'{dim_red_method.upper()} projection of text data',
+                      opacity=0.4,
+                      width=1200, height=800)
 
   app = Dash(__name__)
 
@@ -412,7 +504,7 @@ def plot(df, what_to_display="term_frequencies", dim_red_method="pacmap"):
 
 
 def embed_reduce_and_map(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE, what_to_display="term_frequencies", dim_red_method="pacmap"):
-  assert dim_red_method in ["pacmap", "umap", "tsne"], f"dim_red_method must be one of 'pacmap', 'umap', 'tsne', got {dim_red_method}"
+  assert dim_red_method in ["pacmap", "umap", "tsne", "pacmap_3d"], f"dim_red_method must be one of 'pacmap', 'umap', 'tsne', 'pacmap_3d', got {dim_red_method}"
   
   output_filenames = make_output_filenames(input_filename, dim_red_method)
   df = embed_if_necessary(input_filename, text_column_name, model_to_use=model_to_use, dim_red_method=dim_red_method)
@@ -426,5 +518,7 @@ def embed_reduce_and_map(input_filename, text_column_name, keyword_map={}, model
     df = do_umap(df, output_filenames[model_to_use]["xy"])
   elif dim_red_method == "tsne":
     df = do_tsne(df, output_filenames[model_to_use]["xy"])
+  elif dim_red_method == "pacmap_3d":
+    df = do_pacmap_3d(df, output_filenames[model_to_use]["xy"])
   
   plot(df, what_to_display=what_to_display, dim_red_method=dim_red_method)
