@@ -1,7 +1,7 @@
 [project]
 name = "semaptic"
 description = "helper for exploratory viz of CSV text data with embeddings + PaCMAP" 
-version = "0.0.6"
+version = "0.0.7"
 authors = [
     { name = "Jeremy Merrill", email = "jeremy.merrill@washpost.com" },
 ]
@@ -12,6 +12,7 @@ dependencies = [
     "scikit-learn",
     "umap-learn",
     "dash >= 3.2.0",
+    "nbformat>=4.2.0",
     "itables",
     "plotly",
     "pacmap",

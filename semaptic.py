@@ -90,6 +90,7 @@ def download_sqlite_file(filename):
 
 try:
   from google.colab import userdata, files, output as colab_output
+  in_colab = True
 except ImportError:
    # if we're not in colab, make stubs
    class colab_output:
@@ -107,6 +108,7 @@ except ImportError:
        'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),   
         'GEMINI_API_KEY': os.getenv("GEMINI_API_KEY"),
     }
+   in_colab = False
 
 def make_output_filenames(filename, dim_red_method="pacmap"): 
   filename_slug = filename.replace(".csv", "").replace("_with_openai_embeddings", "").replace("_with_gemini_embeddings", "").replace("_with_xy", "")
@@ -367,7 +369,7 @@ def calc_term_freqs(df_a, df_b, token_col_a, token_col_b=None, token_min_count_t
 # without a full Dash server, but it demonstrates the concept.)
 
 
-def plot(df, what_to_display="term_frequencies", dim_red_method="pacmap"):
+def plot(df, what_to_display="term_frequencies", dim_red_method="pacmap", use_dash=True):
   assert what_to_display in ["term_frequencies", "text_counts", "topic_counts"]
   df["display_text"] = df.text.str.replace(r"https://[^ ]+", '', regex=True).str.wrap(100).str.replace("\n", "<br />")
   
@@ -446,66 +448,67 @@ def plot(df, what_to_display="term_frequencies", dim_red_method="pacmap"):
                       opacity=0.4,
                       width=1200, height=800)
 
-  app = Dash(__name__)
+  if use_dash: 
+    app = Dash(__name__)
 
-  app.layout = html.Div([
-      dcc.Graph(id='scatter-plot', figure=fig),
-      html.Div(id='selected-data-output')
-  ])
+    app.layout = html.Div([
+        dcc.Graph(id='scatter-plot', figure=fig),
+        html.Div(id='selected-data-output')
+    ])
 
-  selected_df = pd.DataFrame()
-  @app.callback(
-      Output('selected-data-output', 'children'),
-      Input('scatter-plot', 'selectedData')
-  )
-  def display_selected_data(selectedData):
-      global selected_df
-      # global selected_data # temp
-      # global selected_points_indices # temp
-      if selectedData:
-          selected_data = selectedData
+    selected_df = pd.DataFrame()
+    @app.callback(
+        Output('selected-data-output', 'children'),
+        Input('scatter-plot', 'selectedData')
+    )
+    def display_selected_data(selectedData):
+        global selected_df
+        # global selected_data # temp
+        # global selected_points_indices # temp
+        if selectedData:
+            selected_data = selectedData
 
-          # gemini generated this, but it doesn't work
-          # the pointIndex value doesn't match up with the index in the dataframe, oddly.
-          # selected_points_indices = [point['pointIndex'] for point in selectedData['points']]
-          # selected_df = df.iloc[selected_points_indices]
+            # gemini generated this, but it doesn't work
+            # the pointIndex value doesn't match up with the index in the dataframe, oddly.
+            # selected_points_indices = [point['pointIndex'] for point in selectedData['points']]
+            # selected_df = df.iloc[selected_points_indices]
 
-          selected_df = df[df.display_text.isin([p['hovertext'] for p in selected_data["points"]])]
-          non_selected_df = df[~df.index.isin(selected_df.index)]
-          if what_to_display == "text_counts":
-            return html.Div([
-                html.H4("Selected Data:" + str(len(selected_df))),
-                dash_table.DataTable(pd.DataFrame(selected_df.display_text.rename("text").value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["text", "count"]])
-            ])
-          if what_to_display == "topic_counts":
-            return html.Div([
-                html.H4("Selected Data:" + str(len(selected_df))),
-                dash_table.DataTable(pd.DataFrame(selected_df.topic.value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["topic", "count"]])
-            ])          
-          elif what_to_display == "term_frequencies":
-            term_freqs = calc_term_freqs(selected_df, non_selected_df, "tokens")
-            term_freq_head_and_tail = pd.concat([term_freqs.head(20), term_freqs.sort_values("a_b_freq_ratio", ascending=True).head(20)])
-            return html.Div([
-                html.H4("Selected Data:" + str(len(selected_df))),
-                dash_table.DataTable(pd.DataFrame(selected_df.topic.value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["topic", "count"]]),
-                dash_table.DataTable(term_freq_head_and_tail.reset_index().to_dict('records'), [{"name": i, "id": i} for i in ["tokens", "token_count_a","freq_a","token_count_b","freq_b","a_b_freq_ratio"]])
-            ])
-      return html.Div("No points selected.")
+            selected_df = df[df.display_text.isin([p['hovertext'] for p in selected_data["points"]])]
+            non_selected_df = df[~df.index.isin(selected_df.index)]
+            if what_to_display == "text_counts":
+              return html.Div([
+                  html.H4("Selected Data:" + str(len(selected_df))),
+                  dash_table.DataTable(pd.DataFrame(selected_df.display_text.rename("text").value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["text", "count"]])
+              ])
+            if what_to_display == "topic_counts":
+              return html.Div([
+                  html.H4("Selected Data:" + str(len(selected_df))),
+                  dash_table.DataTable(pd.DataFrame(selected_df.topic.value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["topic", "count"]])
+              ])          
+            elif what_to_display == "term_frequencies":
+              term_freqs = calc_term_freqs(selected_df, non_selected_df, "tokens")
+              term_freq_head_and_tail = pd.concat([term_freqs.head(20), term_freqs.sort_values("a_b_freq_ratio", ascending=True).head(20)])
+              return html.Div([
+                  html.H4("Selected Data:" + str(len(selected_df))),
+                  dash_table.DataTable(pd.DataFrame(selected_df.topic.value_counts().reset_index()).to_dict('records'), [{"name": i, "id": i} for i in ["topic", "count"]]),
+                  dash_table.DataTable(term_freq_head_and_tail.reset_index().to_dict('records'), [{"name": i, "id": i} for i in ["tokens", "token_count_a","freq_a","token_count_b","freq_b","a_b_freq_ratio"]])
+              ])
+        return html.Div("No points selected.")
+
+    # To run the Dash app in Colab:
+    colab_output.serve_kernel_port_as_iframe(8050)
+    app.run(jupyter_mode='inline'); # This will embed the app directly in Colab
+
+    # this cell is meant to be interactive, shown only when you interact with the plot above
+    init_notebook_mode(all_interactive=True)
+    if len(selected_df):
+      with pd.option_context('display.max_colwidth', None, 'display.max_rows', 500):
+        itables.show(selected_df[["created_at", "text", "url"]])
+  else:
+    fig.show(renderer="plotly_mimetype+notebook_connected")
 
 
-  # To run the Dash app in Colab:
-  colab_output.serve_kernel_port_as_iframe(8050)
-  app.run(jupyter_mode='inline'); # This will embed the app directly in Colab
-
-  # this cell is meant to be interactive, shown only when you interact with the plot above
-  init_notebook_mode(all_interactive=True)
-  if len(selected_df):
-    with pd.option_context('display.max_colwidth', None, 'display.max_rows', 500):
-      itables.show(selected_df[["created_at", "text", "url"]])
-
-
-
-def embed_reduce_and_map(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE, what_to_display="term_frequencies", dim_red_method="pacmap"):
+def embed_reduce_and_map(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE, what_to_display="term_frequencies", dim_red_method="pacmap", use_dash=True):
   assert dim_red_method in ["pacmap", "umap", "tsne", "pacmap_3d"], f"dim_red_method must be one of 'pacmap', 'umap', 'tsne', 'pacmap_3d', got {dim_red_method}"
   
   output_filenames = make_output_filenames(input_filename, dim_red_method)
@@ -523,4 +526,4 @@ def embed_reduce_and_map(input_filename, text_column_name, keyword_map={}, model
   elif dim_red_method == "pacmap_3d":
     df = do_pacmap_3d(df, output_filenames[model_to_use]["xy"])
   
-  plot(df, what_to_display=what_to_display, dim_red_method=dim_red_method)
+  plot(df, what_to_display=what_to_display, dim_red_method=dim_red_method, use_dash=use_dash)
