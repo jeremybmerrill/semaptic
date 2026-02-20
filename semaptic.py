@@ -508,7 +508,18 @@ def plot(df, what_to_display="term_frequencies", dim_red_method="pacmap", use_da
     fig.show(renderer="plotly_mimetype+notebook_connected")
 
 
-def embed_reduce_and_map(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE, what_to_display="term_frequencies", dim_red_method="pacmap", use_dash=True):
+def embed_reduce_and_map(input_filename, text_column_name, keyword_map={}, model_to_use=DEFAULT_MODEL_TO_USE, what_to_display="term_frequencies", dim_red_method="pacmap", use_dash=True):  
+  """
+  do everything: embed the text, reduce the dimensions, and map it with an interactive plot.
+
+  input_filename: a csv file with a column of text to embed
+  text_column_name: the name of the column in the csv file that contains the text to embed
+  keyword_map: a dict of topic -> list of keywords, case-insensitively matched to the text column, used for simple topic classification and coloring in the plot
+  model_to_use: "openai" or "gemini", which embedding model to use
+  what_to_display: what to show in the interactive plot when points are selected. "term_frequencies" will show the tokens that are most overrepresented in the selected region vs the non-selected region. "text_counts" will show the most common texts in the selected region. "topic_counts" will show the most common topics (as defined by the keyword_map) in the selected region. (No-op if use_dash is False)
+  dim_red_method: which dimensionality reduction method to use for the plot. "pacmap" is the default and my favorite, but "umap" and "tsne" are also options, and "pacmap_3d" will give you three separate 2D plots for the three dimensions of a 3D PacMAP reduction.
+  use_dash: whether to use Dash for the interactive plot. If False, a static Plotly plot will be used. Dash is only interactive in a live notebook (Jupyter, VSCode, Colab all ok); Plotly is still interactive in HTML, but the interactivity is limited to zooming and hovering, not selecting regions and seeing stats about them.
+  """
   assert dim_red_method in ["pacmap", "umap", "tsne", "pacmap_3d"], f"dim_red_method must be one of 'pacmap', 'umap', 'tsne', 'pacmap_3d', got {dim_red_method}"
   
   output_filenames = make_output_filenames(input_filename, dim_red_method)
