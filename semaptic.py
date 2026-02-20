@@ -38,6 +38,8 @@ from itables import init_notebook_mode
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from plotly.io import renderers
+renderers.default = "plotly_mimetype+notebook_connected"
 
 DEFAULT_MODEL_TO_USE = "gemini"
 
