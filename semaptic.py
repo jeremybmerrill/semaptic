@@ -216,8 +216,8 @@ def embed_if_necessary(input_filename, text_column_name, model_to_use=DEFAULT_MO
   if db_filename is not None:
     raw_df = load_df_from_sqlite(db_filename)
   else:
-    print("embedding isn't expected, but okay if it is")
-    input()
+    print("Should we embed your items? (This is expected on the first time you run semaptic on a dataset, but not subsequently -- embeddings should be saved)")
+    input("Should we embed your items? (This is expected on the first time you run semaptic on a dataset, but not subsequently -- embeddings should be saved)")
     raw_df = pd.read_csv(input_filename)
     raw_df = embed_df(raw_df, text_column_name=text_column_name, model_to_use=model_to_use)
     output_filename = output_filenames[model_to_use]["no_xy"]
